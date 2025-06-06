@@ -1,392 +1,468 @@
 import 'dart:ui' as ui;
+import 'dart:math' as math;
 
 import 'crop_rect.dart';
 import 'crop_rotation.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-/// A controller to control the functionality of [CropImage].
-class CropController extends ValueNotifier<CropControllerValue> {
-  /// Aspect ratio of the image (width / height).
-  ///
-  /// The [crop] rectangle will be adjusted to fit this ratio.
-  /// Pass null for free selection clipping (aspect ratio not enforced).
-  double? get aspectRatio => value.aspectRatio;
-
-  set aspectRatio(double? newAspectRatio) {
-    if (newAspectRatio != null) {
-      value = value.copyWith(
-        aspectRatio: newAspectRatio,
-        crop: _adjustRatio(value.crop, newAspectRatio),
-      );
-    } else {
-      value = CropControllerValue(
-        null,
-        value.crop,
-        value.rotation,
-        value.minimumImageSize,
-      );
-    }
-    notifyListeners();
-  }
-
-  /// Current crop rectangle of the image (percentage).
-  ///
-  /// [left] and [right] are normalized between 0 and 1 (full width).
-  /// [top] and [bottom] are normalized between 0 and 1 (full height).
-  ///
-  /// If the [aspectRatio] was specified, the rectangle will be adjusted to fit that ratio.
-  ///
-  /// See also:
-  ///
-  ///  * [cropSize], which represents the same rectangle in pixels.
-  Rect get crop => value.crop;
-
-  set crop(Rect newCrop) {
-    value = value.copyWith(crop: _adjustRatio(newCrop, value.aspectRatio));
-    notifyListeners();
-  }
-
-  CropRotation get rotation => value.rotation;
-
-  set rotation(CropRotation rotation) {
-    value = value.copyWith(rotation: rotation);
-    notifyListeners();
-  }
-
-  void rotateRight() => _rotate(left: false);
-
-  void rotateLeft() => _rotate(left: true);
-
-  void _rotate({required final bool left}) {
-    final CropRotation newRotation = left ? value.rotation.rotateLeft : value.rotation.rotateRight;
-    final Offset newCenter = left ? Offset(crop.center.dy, 1 - crop.center.dx) : Offset(1 - crop.center.dy, crop.center.dx);
-    value = CropControllerValue(
-      aspectRatio,
-      _adjustRatio(
-        Rect.fromCenter(
-          center: newCenter,
-          width: crop.height,
-          height: crop.width,
-        ),
-        aspectRatio,
-        rotation: newRotation,
-      ),
-      newRotation,
-      value.minimumImageSize,
-    );
-    notifyListeners();
-  }
-
-  /// Current crop rectangle of the image (pixels).
-  ///
-  /// [left], [right], [top] and [bottom] are in pixels.
-  ///
-  /// If the [aspectRatio] was specified, the rectangle will be adjusted to fit that ratio.
-  ///
-  /// See also:
-  ///
-  ///  * [crop], which represents the same rectangle in percentage.
-  Rect get cropSize => value.crop.multiply(_bitmapSize);
-
-  set cropSize(Rect newCropSize) {
-    value = value.copyWith(
-      crop: _adjustRatio(newCropSize.divide(_bitmapSize), value.aspectRatio),
-    );
-    notifyListeners();
-  }
-
-  ui.Image? _bitmap;
-  late Size _bitmapSize;
-
-  set image(ui.Image newImage) {
-    _bitmap = newImage;
-    _bitmapSize = Size(newImage.width.toDouble(), newImage.height.toDouble());
-    aspectRatio = aspectRatio; // force adjustment
-    notifyListeners();
-  }
-
-  ui.Image? getImage() => _bitmap;
-
-  /// A controller for a [CropImage] widget.
-  ///
-  /// You can provide the required [aspectRatio] and the initial [defaultCrop].
-  /// If [aspectRatio] is specified, the [defaultCrop] rect will be adjusted automatically.
-  ///
-  /// Remember to [dispose] of the [CropController] when it's no longer needed.
-  /// This will ensure we discard any resources used by the object.
-  CropController({
-    double? aspectRatio,
-    Rect defaultCrop = const Rect.fromLTWH(0, 0, 1, 1),
-    CropRotation rotation = CropRotation.up,
-    double minimumImageSize = 100,
-  })  : assert(aspectRatio != 0, 'aspectRatio cannot be zero'),
-        assert(defaultCrop.left >= 0 && defaultCrop.left <= 1, 'left should be 0..1'),
-        assert(defaultCrop.right >= 0 && defaultCrop.right <= 1, 'right should be 0..1'),
-        assert(defaultCrop.top >= 0 && defaultCrop.top <= 1, 'top should be 0..1'),
-        assert(defaultCrop.bottom >= 0 && defaultCrop.bottom <= 1, 'bottom should be 0..1'),
-        assert(defaultCrop.left < defaultCrop.right, 'left must be less than right'),
-        assert(defaultCrop.top < defaultCrop.bottom, 'top must be less than bottom'),
-        super(CropControllerValue(
-          aspectRatio,
-          defaultCrop,
-          rotation,
-          minimumImageSize,
-        ));
-
-  /// Creates a controller for a [CropImage] widget from an initial [CropControllerValue].
-  CropController.fromValue(super.value);
-
-  Rect _adjustRatio(
-    Rect crop,
-    double? aspectRatio, {
-    CropRotation? rotation,
-  }) {
-    if (aspectRatio == null) {
-      return crop;
-    }
-    final bool justRotated = rotation != null;
-    rotation ??= value.rotation;
-    final bitmapWidth = rotation.isSideways ? _bitmapSize.height : _bitmapSize.width;
-    final bitmapHeight = rotation.isSideways ? _bitmapSize.width : _bitmapSize.height;
-    if (justRotated) {
-      // we've just rotated: in that case, biggest centered crop.
-      const center = Offset(.5, .5);
-      final width = bitmapWidth;
-      final height = bitmapHeight;
-      if (width / height > aspectRatio) {
-        final w = height * aspectRatio / bitmapWidth;
-        return Rect.fromCenter(center: center, width: w, height: 1);
-      }
-      final h = width / aspectRatio / bitmapHeight;
-      return Rect.fromCenter(center: center, width: 1, height: h);
-    }
-    final width = crop.width * bitmapWidth;
-    final height = crop.height * bitmapHeight;
-    if (width / height > aspectRatio) {
-      final w = height * aspectRatio / bitmapWidth;
-      return Rect.fromLTWH(crop.center.dx - w / 2, crop.top, w, crop.height);
-    } else {
-      final h = width / aspectRatio / bitmapHeight;
-      return Rect.fromLTWH(crop.left, crop.center.dy - h / 2, crop.width, h);
-    }
-  }
-
-  /// Returns the bitmap cropped with the current crop rectangle.
-  ///
-  /// [maxSize] is the maximum width or height you want.
-  /// [overlayPainter] is an optional painter on top of the cropped image;
-  /// could be used for special effects on the cropped area.
-  /// You can provide the [quality] used in the resizing operation.
-  /// Returns an [ui.Image] asynchronously.
-  Future<ui.Image> croppedBitmap({
-    final double? maxSize,
-    final ui.FilterQuality quality = FilterQuality.high,
-    final CustomPainter? overlayPainter,
-  }) async =>
-      getCroppedBitmap(
-        maxSize: maxSize,
-        quality: quality,
-        crop: crop,
-        rotation: value.rotation,
-        image: _bitmap!,
-        overlayPainter: overlayPainter,
-      );
-
-  /// Returns the bitmap cropped with parameters.
-  ///
-  /// [maxSize] is the maximum width or height you want.
-  /// [overlayPainter] is an optional painter on top of the cropped image;
-  /// could be used for special effects on the cropped area.
-  /// The [crop] `Rect` is normalized to (0, 0) x (1, 1).
-  /// You can provide the [quality] used in the resizing operation.
-  static Future<ui.Image> getCroppedBitmap({
-    final double? maxSize,
-    final ui.FilterQuality quality = FilterQuality.high,
-    required final Rect crop,
-    required final CropRotation rotation,
-    required final ui.Image image,
-    final CustomPainter? overlayPainter,
-  }) async {
-    final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
-    final Canvas canvas = Canvas(pictureRecorder);
-
-    final bool tilted = rotation.isSideways;
-    final double cropWidth;
-    final double cropHeight;
-    if (tilted) {
-      cropWidth = crop.width * image.height;
-      cropHeight = crop.height * image.width;
-    } else {
-      cropWidth = crop.width * image.width;
-      cropHeight = crop.height * image.height;
-    }
-    // factor between the full size and the maxSize constraint.
-    double factor = 1;
-    if (maxSize != null) {
-      if (cropWidth > maxSize || cropHeight > maxSize) {
-        if (cropWidth >= cropHeight) {
-          factor = maxSize / cropWidth;
-        } else {
-          factor = maxSize / cropHeight;
-        }
-      }
-    }
-
-    final Offset cropCenter = rotation.getRotatedOffset(
-      crop.center,
-      image.width.toDouble(),
-      image.height.toDouble(),
-    );
-
-    final double alternateWidth = tilted ? cropHeight : cropWidth;
-    final double alternateHeight = tilted ? cropWidth : cropHeight;
-    if (rotation != CropRotation.up) {
-      canvas.save();
-      final double x = alternateWidth / 2 * factor;
-      final double y = alternateHeight / 2 * factor;
-      canvas.translate(x, y);
-      canvas.rotate(rotation.radians);
-      if (rotation == CropRotation.right) {
-        canvas.translate(
-          -y,
-          -cropWidth * factor + x,
-        );
-      } else if (rotation == CropRotation.left) {
-        canvas.translate(
-          y - cropHeight * factor,
-          -x,
-        );
-      } else if (rotation == CropRotation.down) {
-        canvas.translate(-x, -y);
-      }
-    }
-
-    canvas.drawImageRect(
-      image,
-      Rect.fromCenter(
-        center: cropCenter,
-        width: alternateWidth,
-        height: alternateHeight,
-      ),
-      Rect.fromLTWH(
-        0,
-        0,
-        alternateWidth * factor,
-        alternateHeight * factor,
-      ),
-      Paint()..filterQuality = quality,
-    );
-
-    if (rotation != CropRotation.up) {
-      canvas.restore();
-    }
-
-    final double outputWidth = cropWidth * factor;
-    final double outputHeight = cropHeight * factor;
-    overlayPainter?.paint(canvas, ui.Size(outputWidth, outputHeight));
-
-    //FIXME Picture.toImage() crashes on Flutter Web with the HTML renderer. Use CanvasKit or avoid this operation for now. https://github.com/flutter/engine/pull/20750
-    return await pictureRecorder.endRecording().toImage(
-          outputWidth.round(),
-          outputHeight.round(),
-        );
-  }
-
-  /// Returns the image cropped with the current crop rectangle.
-  ///
-  /// You can provide the [quality] used in the resizing operation.
-  /// [overlayPainter] is an optional painter on top of the cropped image;
-  /// could be used for special effects on the cropped area.
-  /// Returns an [Image] asynchronously.
-  Future<Image> croppedImage({
-    ui.FilterQuality quality = FilterQuality.high,
-    final CustomPainter? overlayPainter,
-  }) async {
-    return Image(
-      image: UiImageProvider(
-        await croppedBitmap(
-          quality: quality,
-          overlayPainter: overlayPainter,
-        ),
-      ),
-      fit: BoxFit.contain,
-    );
-  }
-}
-
 @immutable
 class CropControllerValue {
-  final double? aspectRatio;
-  final Rect crop;
+  final double? aspectRatio; 
+  final Rect cropMaskRect;    
   final CropRotation rotation;
-  final double minimumImageSize;
+  final Size? minCropSize;    
+  final Size? maxCropSize;    
+  final double imageZoomFactor;
+  final Offset imagePanOffset;
+  final bool resizeEnabled;
 
-  const CropControllerValue(
+  const CropControllerValue({
     this.aspectRatio,
-    this.crop,
-    this.rotation,
-    this.minimumImageSize,
-  );
+    required this.cropMaskRect,
+    this.rotation = CropRotation.up,
+    this.minCropSize, // This is now the BASE min size at 1x zoom
+    this.maxCropSize,
+    this.imageZoomFactor = 1.0,
+    this.imagePanOffset = Offset.zero,
+    this.resizeEnabled = true,
+  });
 
   CropControllerValue copyWith({
-    double? aspectRatio,
-    Rect? crop,
+    ValueWrapper<double?>? aspectRatioWrapped,
+    Rect? cropMaskRect,
     CropRotation? rotation,
-    double? minimumImageSize,
-  }) =>
-      CropControllerValue(
-        aspectRatio ?? this.aspectRatio,
-        crop ?? this.crop,
-        rotation ?? this.rotation,
-        minimumImageSize ?? this.minimumImageSize,
-      );
+    ValueWrapper<Size?>? minCropSizeWrapped, 
+    ValueWrapper<Size?>? maxCropSizeWrapped, 
+    double? imageZoomFactor,
+    Offset? imagePanOffset,
+    bool? resizeEnabled,
+  }) {
+    return CropControllerValue(
+      aspectRatio: aspectRatioWrapped != null ? aspectRatioWrapped.value : this.aspectRatio,
+      cropMaskRect: cropMaskRect ?? this.cropMaskRect,
+      rotation: rotation ?? this.rotation,
+      minCropSize: minCropSizeWrapped != null ? minCropSizeWrapped.value : this.minCropSize,
+      maxCropSize: maxCropSizeWrapped != null ? maxCropSizeWrapped.value : this.maxCropSize,
+      imageZoomFactor: imageZoomFactor ?? this.imageZoomFactor,
+      imagePanOffset: imagePanOffset ?? this.imagePanOffset,
+      resizeEnabled: resizeEnabled ?? this.resizeEnabled,
+    );
+  }
 
   @override
   bool operator ==(Object other) {
-    if (identical(this, other)) {
-      return true;
-    }
-    return other is CropControllerValue && other.aspectRatio == aspectRatio && other.crop == crop && other.rotation == rotation && other.minimumImageSize == minimumImageSize;
+    if (identical(this, other)) return true;
+    return other is CropControllerValue &&
+        other.aspectRatio == aspectRatio &&
+        other.cropMaskRect == cropMaskRect &&
+        other.rotation == rotation &&
+        other.minCropSize == minCropSize &&
+        other.maxCropSize == maxCropSize &&
+        other.imageZoomFactor == imageZoomFactor &&
+        other.imagePanOffset == imagePanOffset &&
+        other.resizeEnabled == resizeEnabled;
   }
 
   @override
   int get hashCode => Object.hash(
-        aspectRatio.hashCode,
-        crop.hashCode,
-        rotation.hashCode,
-        minimumImageSize.hashCode,
+        aspectRatio, cropMaskRect, rotation, minCropSize, maxCropSize,
+        imageZoomFactor, imagePanOffset, resizeEnabled,
       );
 }
 
-/// Provides the given [ui.Image] object as an [Image].
-///
-/// Exposed as a convenience. You don't need to use it unless you want to create your own version
-/// of the [croppedImage()] function of [CropController].
-class UiImageProvider extends ImageProvider<UiImageProvider> {
-  /// The [ui.Image] from which the image will be fetched.
-  final ui.Image image;
+class ValueWrapper<T> {
+  final T value;
+  const ValueWrapper(this.value);
+}
 
-  const UiImageProvider(this.image);
+class CropController extends ValueNotifier<CropControllerValue> {
+  ui.Image? _image;
+  Size _imageSize = Size.zero;         
+  Size _viewportSize = Size.zero;     
 
-  @override
-  Future<UiImageProvider> obtainKey(ImageConfiguration configuration) => SynchronousFuture<UiImageProvider>(this);
+  final Size? _constructorInitialCropSizePx;
+  final double? _constructorInitialAspectRatio;
 
-  @override
-  ImageStreamCompleter loadImage(UiImageProvider key, ImageDecoderCallback decode) => OneFrameImageStreamCompleter(_loadAsync(key));
+  void updateViewportSize(Size newViewportSize) {
+    if (_viewportSize == newViewportSize || newViewportSize.isEmptyOrInvalid) return;
+    final oldViewportAR = _viewportSize.isEmptyOrInvalid ? 0.0 : _viewportSize.width / _viewportSize.height;
+    final newViewportAR = newViewportSize.isEmptyOrInvalid ? 0.0 : newViewportSize.width / newViewportSize.height;
+    _viewportSize = newViewportSize;
 
-  Future<ImageInfo> _loadAsync(UiImageProvider key) async {
-    assert(key == this);
-    return ImageInfo(image: image);
+    if ((oldViewportAR - newViewportAR).abs() > 0.01 || oldViewportAR == 0.0) {
+        this.cropMaskRect = value.cropMaskRect; 
+    }
   }
 
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is UiImageProvider && //
-          runtimeType == other.runtimeType &&
-          image == other.image;
+  double? get aspectRatio => value.aspectRatio; 
+  set aspectRatio(double? newAspectRatio) {
+    if (value.aspectRatio == newAspectRatio && newAspectRatio != null) return;
+    if (value.aspectRatio == null && newAspectRatio == null) return;
 
-  @override
-  int get hashCode => image.hashCode;
+    Rect newMask = _enforceConstraints(
+        value.cropMaskRect, newAspectRatio, value.minCropSize, 
+        value.maxCropSize, Alignment.center 
+    );
+    this.value = value.copyWith(aspectRatioWrapped: ValueWrapper(newAspectRatio), cropMaskRect: newMask);
+  }
+
+  Rect get cropMaskRect => value.cropMaskRect;
+  set cropMaskRect(Rect newMask) { 
+    Rect constrainedMask = _enforceConstraints(
+        newMask, value.aspectRatio, value.minCropSize, 
+        value.maxCropSize, null 
+    );
+    if (value.cropMaskRect == constrainedMask) return;
+    this.value = value.copyWith(cropMaskRect: constrainedMask);
+  }
+  
+  void updateCropMaskRectFromGesture(Rect proposedMask, Alignment? anchor) {
+    Rect constrainedMask = _enforceConstraints(
+        proposedMask, value.aspectRatio, value.minCropSize, 
+        value.maxCropSize, anchor 
+    );
+    if (value.cropMaskRect == constrainedMask) return;
+    this.value = value.copyWith(cropMaskRect: constrainedMask);
+  }
+  
+  void updateResizingCropMaskInProgress(Rect proposedMaskByGesture, Alignment? anchor) {
+      Rect visuallyCorrectedMask = proposedMaskByGesture.OutOfBounds(minWidth: 0.01, minHeight: 0.01);
+      if (this.aspectRatio != null && !this._viewportSize.isEmptyOrInvalid) {
+          visuallyCorrectedMask = this._adjustMaskAspectRatio( 
+              visuallyCorrectedMask,
+              this.aspectRatio!, 
+              anchor,                     
+              this._viewportSize          
+          );
+      }
+      visuallyCorrectedMask = visuallyCorrectedMask.OutOfBounds(minWidth: 0.01, minHeight: 0.01);
+
+      if (this.value.cropMaskRect != visuallyCorrectedMask) {
+          this.value = this.value.copyWith(cropMaskRect: visuallyCorrectedMask);
+      }
+  }
+
+  void updateMovedMaskAndPanPreservingSize(Rect translatedMask, Offset newImagePanOffset) {
+      final double w = math.max(0.01, translatedMask.width).clamp(0.0, 1.0);
+      final double h = math.max(0.01, translatedMask.height).clamp(0.0, 1.0);
+      double clampedLeft = translatedMask.left.clamp(0.0, 1.0 - w);
+      double clampedTop = translatedMask.top.clamp(0.0, 1.0 - h);
+      clampedLeft = clampedLeft.clamp(0.0, 1.0-w); 
+      clampedTop = clampedTop.clamp(0.0, 1.0-h);   
+      Rect positionallyClampedMask = Rect.fromLTWH(clampedLeft, clampedTop, w, h);
+
+      final effectiveZoom = value.imageZoomFactor > 0.00001 ? value.imageZoomFactor : 1.0;
+      Offset clampedImagePanOffset = newImagePanOffset;
+      if (effectiveZoom >= 1.01) { 
+        final maxPanX = math.max(0.0, 1.0 - 1.0 / effectiveZoom);
+        final maxPanY = math.max(0.0, 1.0 - 1.0 / effectiveZoom);
+        clampedImagePanOffset = Offset(
+            newImagePanOffset.dx.clamp(0.0, maxPanX),
+            newImagePanOffset.dy.clamp(0.0, maxPanY), );
+      } else {
+        clampedImagePanOffset = Offset.zero;
+      }
+
+      if (value.cropMaskRect == positionallyClampedMask && value.imagePanOffset == clampedImagePanOffset) return;
+      this.value = value.copyWith( cropMaskRect: positionallyClampedMask, imagePanOffset: clampedImagePanOffset );
+  }
+
+  void updateCropMaskSize({double? normWidth, double? normHeight, Alignment anchor = Alignment.center}) {
+    Rect currentMask = value.cropMaskRect;
+    double newW = normWidth ?? currentMask.width;
+    double newH = normHeight ?? currentMask.height;
+
+    if (value.aspectRatio != null) {
+        if (normWidth != null && normHeight == null) { 
+            if (!_viewportSize.isEmptyOrInvalid && value.aspectRatio! > 0) {
+                double viewportAR = _viewportSize.width / _viewportSize.height;
+                if (viewportAR > 0) { 
+                    double targetNormShapeAR = value.aspectRatio! / viewportAR;
+                    if (targetNormShapeAR > 0) newH = newW / targetNormShapeAR;
+                }
+            } else if (value.aspectRatio! > 0) { newH = newW / value.aspectRatio!; }
+        } else if (normHeight != null && normWidth == null) { 
+             if (!_viewportSize.isEmptyOrInvalid && value.aspectRatio! > 0) {
+                double viewportAR = _viewportSize.width / _viewportSize.height;
+                if (viewportAR > 0) { 
+                    double targetNormShapeAR = value.aspectRatio! / viewportAR;
+                    newW = newH * targetNormShapeAR;
+                }
+            } else if (value.aspectRatio! > 0) { newW = newH * value.aspectRatio!; }
+        }
+    }
+    Rect proposedMask = _createRectFromDimensions(currentMask, newW, newH, anchor);
+    this.cropMaskRect = proposedMask; 
+}
+
+  bool get resizeEnabled => value.resizeEnabled;
+  set resizeEnabled(bool enabled) {
+    if (value.resizeEnabled == enabled) return;
+    this.value = value.copyWith(resizeEnabled: enabled);
+  }
+
+  CropRotation get rotation => value.rotation;
+  set rotation(CropRotation newRotation) {
+    if (value.rotation == newRotation) return;
+    Rect currentMask = value.cropMaskRect;
+    this.value = value.copyWith(
+        rotation: newRotation, imagePanOffset: Offset.zero, imageZoomFactor: 1.0,
+        cropMaskRect: _enforceConstraints(currentMask, value.aspectRatio, value.minCropSize, value.maxCropSize, Alignment.center, newZoomOverride: 1.0) );
+  }
+
+  double get imageZoomFactor => value.imageZoomFactor;
+  set imageZoomFactor(double newZoom) {
+    final clampedNewZoom = newZoom.clamp(1.0, 8.0);
+    bool isActualChange = (value.imageZoomFactor - clampedNewZoom).abs() >= 0.001;
+    bool isZoomingOutToReset = (clampedNewZoom < 1.01 && !value.resizeEnabled && value.imageZoomFactor >= 1.01);
+    if (!isActualChange && !isZoomingOutToReset) {
+        if (clampedNewZoom < 1.01 && value.imagePanOffset != Offset.zero) {
+            this.value = value.copyWith(imagePanOffset: Offset.zero); 
+        }
+        return;
+    }
+    Offset newPan; Rect finalMaskRect; 
+    if (isZoomingOutToReset) {
+        newPan = Offset.zero; Rect baseMaskForReset;
+        if (_constructorInitialCropSizePx != null && !_imageSize.isEmptyOrInvalid) {
+            Size targetPxSize = _constructorInitialCropSizePx!;
+            if (_constructorInitialAspectRatio != null) targetPxSize = _adjustPixelSizeToAspectRatio(targetPxSize, _constructorInitialAspectRatio!);
+            double normW = _imageSize.width > 0 ? (targetPxSize.width / _imageSize.width).clamp(0.01, 1.0) : 0.5;
+            double normH = _imageSize.height > 0 ? (targetPxSize.height / _imageSize.height).clamp(0.01, 1.0) : 0.5;
+            baseMaskForReset = Rect.fromCenter(center: const Offset(0.5, 0.5), width: normW, height: normH);
+        } else baseMaskForReset = const Rect.fromLTWH(0.1, 0.1, 0.8, 0.8);
+        finalMaskRect = _enforceConstraints( baseMaskForReset, _constructorInitialAspectRatio, 
+            value.minCropSize, value.maxCropSize, Alignment.center, newZoomOverride: 1.0 );
+    } else {
+        finalMaskRect = value.cropMaskRect; 
+        final oldZoom = value.imageZoomFactor; final oldPan = value.imagePanOffset;
+        final currentMaskCenter = finalMaskRect.center; 
+        final visiblePortionLeftOld = oldPan.dx; final visiblePortionTopOld = oldPan.dy;
+        final safeOldZoom = oldZoom < 0.00001 ? 1.0 : oldZoom;
+        final visiblePortionWidthOld = 1.0 / safeOldZoom; final visiblePortionHeightOld = 1.0 / safeOldZoom;
+        final imagePointAtMaskCenterX = visiblePortionLeftOld + currentMaskCenter.dx * visiblePortionWidthOld;
+        final imagePointAtMaskCenterY = visiblePortionTopOld + currentMaskCenter.dy * visiblePortionHeightOld;
+        final safeNewZoom = clampedNewZoom < 0.00001 ? 1.0 : clampedNewZoom;
+        double panX = imagePointAtMaskCenterX - currentMaskCenter.dx / safeNewZoom;
+        double panY = imagePointAtMaskCenterY - currentMaskCenter.dy / safeNewZoom;
+        newPan = Offset(panX, panY);
+        if (safeNewZoom < 1.01) newPan = Offset.zero; 
+        else {
+          final maxPanX = math.max(0.0, 1.0 - 1.0 / safeNewZoom);
+          final maxPanY = math.max(0.0, 1.0 - 1.0 / safeNewZoom);
+          newPan = Offset(newPan.dx.clamp(0.0, maxPanX), newPan.dy.clamp(0.0, maxPanY)); }
+    }
+    this.value = value.copyWith(imageZoomFactor: clampedNewZoom, imagePanOffset: newPan, cropMaskRect: finalMaskRect );
+  }
+
+  Offset get imagePanOffset => value.imagePanOffset;
+  set imagePanOffset(Offset newPan) {
+    final effectiveZoom = value.imageZoomFactor > 0.00001 ? value.imageZoomFactor : 1.0;
+    if (effectiveZoom < 1.01) { 
+      if (value.imagePanOffset == Offset.zero) return;
+      this.value = value.copyWith(imagePanOffset: Offset.zero);
+      return;
+    }
+    final maxPanX = math.max(0.0, 1.0 - 1.0 / effectiveZoom);
+    final maxPanY = math.max(0.0, 1.0 - 1.0 / effectiveZoom);
+    final clampedPan = Offset( newPan.dx.clamp(0.0, maxPanX), newPan.dy.clamp(0.0, maxPanY) );
+    if (value.imagePanOffset == clampedPan) return;
+    this.value = value.copyWith(imagePanOffset: clampedPan);
+  }
+
+  ui.Image? get image => _image;
+  set image(ui.Image? newImage) {
+    if (_image == newImage) return;
+    _image = newImage;
+    if (newImage != null) _imageSize = Size(newImage.width.toDouble(), newImage.height.toDouble());
+    else _imageSize = Size.zero;
+    Rect targetSetupMask;
+    if (_constructorInitialCropSizePx != null && !_imageSize.isEmptyOrInvalid) {
+        Size targetPxSize = _constructorInitialCropSizePx!;
+        if (_constructorInitialAspectRatio != null) targetPxSize = _adjustPixelSizeToAspectRatio(targetPxSize, _constructorInitialAspectRatio!);
+        double normW = _imageSize.width > 0 ? (targetPxSize.width / _imageSize.width).clamp(0.01, 1.0) : 0.5;
+        double normH = _imageSize.height > 0 ? (targetPxSize.height / _imageSize.height).clamp(0.01, 1.0) : 0.5;
+        targetSetupMask = Rect.fromCenter(center: const Offset(0.5, 0.5), width: normW, height: normH);
+    } else targetSetupMask = (newImage == null) ? const Rect.fromLTWH(0.1,0.1,0.8,0.8) : value.cropMaskRect;
+    Rect fullyConstrainedMask = _enforceConstraints( targetSetupMask, _constructorInitialAspectRatio ?? value.aspectRatio, 
+        value.minCropSize, value.maxCropSize, Alignment.center, newZoomOverride: 1.0 );
+    this.value = CropControllerValue( aspectRatio: _constructorInitialAspectRatio ?? value.aspectRatio, 
+      cropMaskRect: fullyConstrainedMask, rotation: CropRotation.up, 
+      minCropSize: value.minCropSize, maxCropSize: value.maxCropSize, 
+      imageZoomFactor: 1.0, imagePanOffset: Offset.zero, resizeEnabled: value.resizeEnabled );
+  }
+  
+  Size get imageSize => _imageSize; Size get viewportSize => _viewportSize; 
+
+  CropController({
+    double? initialAspectRatio, Rect initialCropMaskRect = const Rect.fromLTWH(0.1,0.1,0.8,0.8),
+    Size? initialCropSizePx, CropRotation initialRotation = CropRotation.up,
+    Size? minCropSize, Size? maxCropSize, bool initialResizeEnabled = true,
+  }) : _constructorInitialCropSizePx = initialCropSizePx, _constructorInitialAspectRatio = initialAspectRatio,
+       super( CropControllerValue( aspectRatio: initialAspectRatio, 
+            cropMaskRect: initialCropMaskRect.OutOfBounds(minWidth:0.01,minHeight:0.01),
+            rotation: initialRotation, minCropSize: minCropSize, maxCropSize: maxCropSize,
+            imageZoomFactor: 1.0, imagePanOffset: Offset.zero, resizeEnabled: initialResizeEnabled )) {
+            if (initialAspectRatio != null) {
+                 Rect adjustedInitialMask = _adjustMaskAspectRatio(
+                    this.value.cropMaskRect, 
+                    initialAspectRatio, 
+                    Alignment.center, 
+                    const Size(1,1)
+                );
+                this.value = this.value.copyWith(cropMaskRect: adjustedInitialMask);
+            }
+          }
+
+  Size _adjustPixelSizeToAspectRatio(Size pxSize, double targetAR) {
+    double w = pxSize.width; double h = pxSize.height; if (w <= 0 || h <= 0 || targetAR <= 0) return Size(math.max(1,w), math.max(1,h)); 
+    double currentAR = w / h; if ((currentAR - targetAR).abs() < 0.001) return Size(math.max(1,w), math.max(1,h)); 
+    if (currentAR > targetAR) w = h * targetAR; else h = w / targetAR;
+    return Size(math.max(1,w), math.max(1,h)); 
+  }
+
+  Rect _enforceConstraints( 
+      Rect mask, double? targetVisualAspectRatio,
+      Size? minCropPxSize, Size? maxCropPxSize, // These are the BASE sizes at zoom 1.0
+      Alignment? anchor, {double? newZoomOverride} 
+  ) {
+    final currentImageZoom = newZoomOverride ?? this.value.imageZoomFactor;
+    final Size currentOriginalImageSize = this._imageSize; 
+    final Size currentViewportSize = this._viewportSize;  
+
+    Rect currentMask = mask.OutOfBounds(minWidth: 0.01, minHeight: 0.01);
+    Alignment effectiveAnchor = anchor ?? Alignment.center; 
+
+    for (int i = 0; i < 3; i++) { Rect previousMaskInLoop = currentMask;
+        if (targetVisualAspectRatio != null && !currentViewportSize.isEmptyOrInvalid) {
+          currentMask = _adjustMaskAspectRatio(currentMask, targetVisualAspectRatio, effectiveAnchor, currentViewportSize); 
+        }
+        if (!currentOriginalImageSize.isEmptyOrInvalid && currentImageZoom > 0) {
+            final double imgWidth = currentOriginalImageSize.width; final double imgHeight = currentOriginalImageSize.height;
+            final safeCurrentImageZoom = currentImageZoom < 0.00001 ? 1.0 : currentImageZoom;
+            Size getCurrentMaskOrigPxSize() => Size(
+                math.max(0,currentMask.width * (imgWidth / safeCurrentImageZoom)),
+                math.max(0,currentMask.height * (imgHeight / safeCurrentImageZoom)) );
+
+            // ***** MODIFIED LOGIC HERE *****
+            // Calculate effective min/max pixel sizes based on zoom factor
+            final Size? effectiveMinPxSize = minCropPxSize == null 
+              ? null 
+              : minCropPxSize / safeCurrentImageZoom; 
+            final Size? effectiveMaxPxSize = maxCropPxSize == null
+              ? null
+              : maxCropPxSize; // Max size usually remains absolute regardless of zoom. Or should it scale too? 
+                               // Let's assume max size is absolute and min size scales with zoom.
+                               // User said "minCropSize should be minCropSize:imageZoomFactor"
+                               // This implies scaling. Let's apply to min only as is most common.
+            
+            if (effectiveMinPxSize != null) { Size currentPx = getCurrentMaskOrigPxSize(); bool minSizeAdjusted = false;
+                if (currentPx.width < effectiveMinPxSize.width - 0.001) { 
+                    double targetMaskWidthVP = (effectiveMinPxSize.width / imgWidth) * safeCurrentImageZoom;
+                    currentMask = _resizeMaskDimension(currentMask, targetMaskWidthVP.clamp(0.01, 1.0), null, effectiveAnchor, currentViewportSize, targetVisualAspectRatio); 
+                    minSizeAdjusted = true; }
+                currentPx = getCurrentMaskOrigPxSize(); 
+                if (currentPx.height < effectiveMinPxSize.height - 0.001) {
+                    double targetMaskHeightVP = (effectiveMinPxSize.height / imgHeight) * safeCurrentImageZoom;
+                    currentMask = _resizeMaskDimension(currentMask, null, targetMaskHeightVP.clamp(0.01, 1.0), effectiveAnchor, currentViewportSize, targetVisualAspectRatio); 
+                    minSizeAdjusted = true;  }
+                if (minSizeAdjusted && targetVisualAspectRatio != null && !currentViewportSize.isEmptyOrInvalid){
+                    currentMask = _adjustMaskAspectRatio(currentMask, targetVisualAspectRatio, effectiveAnchor, currentViewportSize); }}
+            if (maxCropPxSize != null) { Size currentPx = getCurrentMaskOrigPxSize(); bool maxSizeAdjusted = false;
+                if (currentPx.width > maxCropPxSize.width + 0.001) {
+                    double targetMaskWidthVP = (maxCropPxSize.width / imgWidth) * safeCurrentImageZoom;
+                    currentMask = _resizeMaskDimension(currentMask, targetMaskWidthVP.clamp(0.01, 1.0), null, effectiveAnchor, currentViewportSize, targetVisualAspectRatio); 
+                    maxSizeAdjusted = true; }
+                currentPx = getCurrentMaskOrigPxSize();
+                if (currentPx.height > maxCropPxSize.height + 0.001) {
+                    double targetMaskHeightVP = (maxCropPxSize.height / imgHeight) * safeCurrentImageZoom;
+                    currentMask = _resizeMaskDimension(currentMask, null, targetMaskHeightVP.clamp(0.01, 1.0), effectiveAnchor, currentViewportSize, targetVisualAspectRatio); 
+                    maxSizeAdjusted = true; }
+                if (maxSizeAdjusted && targetVisualAspectRatio != null && !currentViewportSize.isEmptyOrInvalid){
+                    currentMask = _adjustMaskAspectRatio(currentMask, targetVisualAspectRatio, effectiveAnchor, currentViewportSize); }}
+        } if (currentMask == previousMaskInLoop) break; 
+    } return currentMask.OutOfBounds(minWidth: 0.01, minHeight: 0.01);
+  }
+  
+  Rect _createRectFromDimensions(Rect oldM, double nW, double nH, Alignment anc) { 
+    nW=nW.clamp(0.01,1.0); nH=nH.clamp(0.01,1.0); double nL=oldM.left; double nT=oldM.top;
+    if(anc==Alignment.topLeft){} else if(anc==Alignment.topCenter){nL=oldM.center.dx-nW/2;} else if(anc==Alignment.topRight){nL=oldM.right-nW;}
+    else if(anc==Alignment.centerLeft){nT=oldM.center.dy-nH/2;} else if(anc==Alignment.centerRight){nL=oldM.right-nW;nT=oldM.center.dy-nH/2;}
+    else if(anc==Alignment.bottomLeft){nT=oldM.bottom-nH;} else if(anc==Alignment.bottomCenter){nL=oldM.center.dx-nW/2;nT=oldM.bottom-nH;}
+    else if(anc==Alignment.bottomRight){nL=oldM.right-nW;nT=oldM.bottom-nH;} else{nL=oldM.center.dx-nW/2;nT=oldM.center.dy-nH/2;}
+    return Rect.fromLTWH(nL,nT,nW,nH).OutOfBounds(minWidth:0.01,minHeight:0.01);
+}
+
+  Rect _resizeMaskDimension( Rect m, double? nWVP, double? nHVP, Alignment? anc, Size vpSize, double? visAR ) { 
+    double finNW = nWVP??m.width; double finNH = nHVP??m.height;
+    if (visAR!=null && !vpSize.isEmptyOrInvalid) { final double vpAR=vpSize.width/vpSize.height;
+        if (vpAR>0) { final double normAR=visAR/vpAR; if (normAR>0) {
+            if(nWVP!=null && nHVP==null) finNH=finNW/normAR; else if(nHVP!=null && nWVP==null) finNW=finNH*normAR;
+            else if(nWVP!=null && nHVP!=null) finNH=finNW/normAR; }}}
+    finNW=math.max(0.01,finNW).clamp(0.0,1.0); finNH=math.max(0.01,finNH).clamp(0.0,1.0);
+    double nL=m.left; double nT=m.top;
+    if(anc==Alignment.topLeft){} else if(anc==Alignment.topCenter){nL=m.center.dx-finNW/2;} else if(anc==Alignment.topRight){nL=m.right-finNW;}
+    else if(anc==Alignment.centerLeft){nT=m.center.dy-finNH/2;} else if(anc==Alignment.centerRight){nL=m.right-finNW;nT=m.center.dy-finNH/2;}
+    else if(anc==Alignment.bottomLeft){nT=m.bottom-finNH;} else if(anc==Alignment.bottomCenter){nL=m.center.dx-finNW/2;nT=m.bottom-finNH;}
+    else if(anc==Alignment.bottomRight){nL=m.right-finNW;nT=m.bottom-finNH;} else{nL=m.center.dx-finNW/2;nT=m.center.dy-finNH/2;}
+    return Rect.fromLTWH(nL,nT,finNW,finNH).OutOfBounds(minWidth:0.01,minHeight:0.01);
+  }
+
+  Rect _adjustMaskAspectRatio(Rect m, double visAR, Alignment? anc, Size vpSize) { 
+    if(vpSize.isEmptyOrInvalid)return m.OutOfBounds(minWidth:0.01,minHeight:0.01);
+    final double vpAR=vpSize.width/vpSize.height; if(vpAR<=0)return m.OutOfBounds(minWidth:0.01,minHeight:0.01);
+    final double normAR=visAR/vpAR; double curNW=m.width; double curNH=m.height;
+    if(curNW<=0.00001&&curNH<=0.00001)return m.OutOfBounds(minWidth:0.01,minHeight:0.01);
+    if(normAR<=0)return m.OutOfBounds(minWidth:0.01,minHeight:0.01);
+    if(curNW<=0.00001)curNW=math.max(0.01,curNH*normAR); else if(curNH<=0.00001)curNH=math.max(0.01,curNW/normAR);
+    double nNW=curNW; double nNH=curNH;
+    final curNormAR=curNH>0.00001?curNW/curNH:normAR; 
+    if((curNormAR-normAR).abs()>0.001){if(curNormAR>normAR)nNW=curNH*normAR; else nNH=curNW/normAR;}
+    nNW=math.max(0.01,nNW);nNH=math.max(0.01,nNH);
+    return _resizeMaskDimension(m,nNW,nNH,anc,vpSize,null); 
+  }
+  
+  Future<ui.Image?> croppedBitmap({double? maxSize, ui.FilterQuality quality = FilterQuality.high}) async {
+    if(_image==null||_imageSize.isEmpty)return null; final ui.Image oImg=_image!;final Size oPx=_imageSize; 
+    final curZ=value.imageZoomFactor > 0.00001 ? value.imageZoomFactor : 1.0;
+    double srcNW=1.0/curZ;double srcNH=1.0/curZ; double srcNX=value.imagePanOffset.dx;double srcNY=value.imagePanOffset.dy;
+    Rect visOrigNorm=Rect.fromLTWH(srcNX,srcNY,srcNW,srcNH);
+    Rect finCropOrigNorm=Rect.fromLTWH(visOrigNorm.left+value.cropMaskRect.left*visOrigNorm.width, visOrigNorm.top+value.cropMaskRect.top*visOrigNorm.height,
+      value.cropMaskRect.width*visOrigNorm.width,value.cropMaskRect.height*visOrigNorm.height);
+    Rect finPx=finCropOrigNorm.multiply(oPx);
+    final ui.PictureRecorder rec=ui.PictureRecorder();final Canvas c=Canvas(rec);
+    final double outWUS,outHUS; if(value.rotation.isSideways){outWUS=finPx.height;outHUS=finPx.width;}else{outWUS=finPx.width;outHUS=finPx.height;}
+    if(outWUS<=0.001||outHUS<=0.001)return null; double sF=1.0;
+    if(maxSize!=null){if(outWUS>maxSize||outHUS>maxSize){if(outWUS>outHUS)sF=maxSize/outWUS;else sF=maxSize/outHUS;}}
+    final double finOutW=outWUS*sF;final double finOutH=outHUS*sF;
+    c.save();c.translate(finOutW/2,finOutH/2);c.rotate(value.rotation.radians);
+    final Rect dstRot; if(value.rotation.isSideways){dstRot=Rect.fromLTWH(-finPx.height*sF/2,-finPx.width*sF/2,finPx.height*sF,finPx.width*sF);}
+    else{dstRot=Rect.fromLTWH(-finPx.width*sF/2,-finPx.height*sF/2,finPx.width*sF,finPx.height*sF);}
+    c.drawImageRect(oImg,finPx,dstRot,Paint()..filterQuality=quality);c.restore();
+    return rec.endRecording().toImage(finOutW.round(),finOutH.round());
+  }
+}
+
+extension RectSafeArea on Rect {
+  Rect OutOfBounds({double minWidth = 0.0, double minHeight = 0.0}) {
+    double l = left.clamp(0.0, 1.0); double t = top.clamp(0.0, 1.0);
+    double w = width; double h = height;
+    if(w<0)w=0; if(h<0)h=0;
+    final effMinW = minWidth > 0 ? minWidth : 0.0; final effMinH = minHeight > 0 ? minHeight : 0.0;
+    if(w<effMinW)w=effMinW; if(h<effMinH)h=effMinH;
+    l=l.clamp(0.0,(1.0-w).clamp(0.0,1.0)); t=t.clamp(0.0,(1.0-h).clamp(0.0,1.0)); 
+    w=w.clamp(effMinW,1.0-l); h=h.clamp(effMinH,1.0-t); 
+    return Rect.fromLTWH(l,t,w,h);
+  }
+}
+extension on Size { bool get isEmptyOrInvalid => isEmpty || width <= 0 || height <= 0; }
+
+class UiImageProvider extends ImageProvider<UiImageProvider> { /* ... (no changes) ... */ 
+  final ui.Image image; const UiImageProvider(this.image);
+  @override Future<UiImageProvider> obtainKey(ImageConfiguration configuration) => SynchronousFuture<UiImageProvider>(this);
+  @override ImageStreamCompleter loadImage(UiImageProvider key, ImageDecoderCallback decode) => OneFrameImageStreamCompleter(_loadAsync(key));
+  Future<ImageInfo> _loadAsync(UiImageProvider key) async { assert(key == this); return ImageInfo(image: image); }
+  @override bool operator ==(Object other) => identical(this, other) || other is UiImageProvider && runtimeType == other.runtimeType && image == other.image;
+  @override int get hashCode => image.hashCode;
 }

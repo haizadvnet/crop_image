@@ -1,7 +1,16 @@
-import 'package:crop_image/crop_image.dart';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+// Assuming your crop_image package files are in a 'lib' folder accessible via package import
+// If your library is in the same project, adjust the import path accordingly.
+// For example, if your main.dart is in example/lib and your crop library is in lib:
+// import 'package:your_project_name/crop_image.dart';
+// For this example, let's assume the crop_image.dart from the library is directly accessible
+// You would typically import the main export file of your package:
+import 'package:crop_image/crop_image.dart'; //
 
-void main() => runApp(const MyApp());
+void main() {
+  runApp(const MyApp());
+}
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -9,145 +18,201 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Crop Image Demo',
-      theme: ThemeData(primarySwatch: Colors.blue),
-      home: const MyHomePage(title: 'Crop Image Demo'),
+      title: 'Crop Image Example',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
+      ),
+      home: const CropDemoPage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  final String title;
-
-  const MyHomePage({super.key, required this.title});
+class CropDemoPage extends StatefulWidget {
+  const CropDemoPage({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<CropDemoPage> createState() => _CropDemoPageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  final controller = CropController(
-    aspectRatio: 0.7,
-    defaultCrop: const Rect.fromLTRB(0.1, 0.1, 0.9, 0.9),
+class _CropDemoPageState extends State<CropDemoPage> {
+  final CropController _cropController = CropController(
+    // Default aspect ratio for the crop mask (optional)
+    initialCropSizePx:Size(100, 250),
+    initialAspectRatio: 0.9,
+    initialResizeEnabled: true,
+    minCropSize:Size(300, 300),
+    // Default crop mask (normalized 0-1 relative to the image viewport)
+    initialCropMaskRect: const Rect.fromLTWH(0.1, 0.1, 0.1, 0.1),
   );
 
+  double _currentZoomSliderValue = 1.0;
+  // Store the ui.Image to avoid re-resolving if not necessary,
+  // though CropImage handles its own ui.Image loading via controller.image
+  ui.Image? _displayedImage; 
+
   @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(
-          title: Text(widget.title),
-        ),
-        body: Center(
-          child: CropImage(
-            controller: controller,
-            image: Image.asset('assets/08272011229.jpg'),
-            paddingSize: 25.0,
-            alwaysMove: true,
-            minimumImageSize: 500,
-            maximumImageSize: 500,
-          ),
-        ),
-        bottomNavigationBar: _buildButtons(),
-      );
+  void initState() {
+    super.initState();
+    _currentZoomSliderValue = _cropController.imageZoomFactor;
+    _cropController.addListener(_onControllerUpdate);
+  }
 
-  Widget _buildButtons() => Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          IconButton(
-            icon: const Icon(Icons.close),
-            onPressed: () {
-              controller.rotation = CropRotation.up;
-              controller.crop = const Rect.fromLTRB(0.1, 0.1, 0.9, 0.9);
-              controller.aspectRatio = 1.0;
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.aspect_ratio),
-            onPressed: _aspectRatios,
-          ),
-          IconButton(
-            icon: const Icon(Icons.rotate_90_degrees_ccw_outlined),
-            onPressed: _rotateLeft,
-          ),
-          IconButton(
-            icon: const Icon(Icons.rotate_90_degrees_cw_outlined),
-            onPressed: _rotateRight,
-          ),
-          TextButton(
-            onPressed: _finished,
-            child: const Text('Done'),
-          ),
-        ],
-      );
-
-  Future<void> _aspectRatios() async {
-    final value = await showDialog<double>(
-      context: context,
-      builder: (context) {
-        return SimpleDialog(
-          title: const Text('Select aspect ratio'),
-          children: [
-            // special case: no aspect ratio
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, -1.0),
-              child: const Text('free'),
-            ),
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, 1.0),
-              child: const Text('square'),
-            ),
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, 2.0),
-              child: const Text('2:1'),
-            ),
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, 1 / 2),
-              child: const Text('1:2'),
-            ),
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, 4.0 / 3.0),
-              child: const Text('4:3'),
-            ),
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, 16.0 / 9.0),
-              child: const Text('16:9'),
-            ),
-          ],
-        );
-      },
-    );
-    if (value != null) {
-      controller.aspectRatio = value == -1 ? null : value;
-      controller.crop = const Rect.fromLTRB(0.1, 0.1, 0.9, 0.9);
+  void _onControllerUpdate() {
+    if (!mounted) return;
+    // Update slider if zoom factor changes in controller for other reasons
+    if (_cropController.imageZoomFactor != _currentZoomSliderValue) {
+      setState(() {
+        _currentZoomSliderValue = _cropController.imageZoomFactor;
+      });
+    }
+    // If you need to react to other controller changes, you can do it here.
+    // For example, if the image itself changes in the controller:
+    if (_displayedImage != _cropController.image) {
+      setState(() {
+        _displayedImage = _cropController.image;
+      });
     }
   }
 
-  Future<void> _rotateLeft() async => controller.rotateLeft();
+  @override
+  void dispose() {
+    _cropController.removeListener(_onControllerUpdate);
+    _cropController.dispose();
+    super.dispose();
+  }
 
-  Future<void> _rotateRight() async => controller.rotateRight();
+  Future<void> _cropImage() async {
+    final ui.Image? croppedImage = await _cropController.croppedBitmap();
 
-  Future<void> _finished() async {
-    final image = await controller.croppedImage();
-    if (mounted)
-      await showDialog<bool>(
+    if (croppedImage != null && mounted) {
+      showDialog(
         context: context,
-        builder: (context) {
-          return SimpleDialog(
-            contentPadding: const EdgeInsets.all(6.0),
-            titlePadding: const EdgeInsets.all(8.0),
-            title: const Text('Cropped image'),
-            children: [
-              Text('relative: ${controller.crop}'),
-              Text('pixels: ${controller.cropSize}'),
-              const SizedBox(height: 5),
-              image,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: const Text('Cropped Image'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: RawImage(image: croppedImage, fit: BoxFit.contain),
+            ),
+            actions: <Widget>[
               TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('OK'),
+                child: const Text('Close'),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
               ),
             ],
           );
         },
       );
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to crop image or no image loaded.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Image Cropper Example'),
+      ),
+      body: Column(
+        children: <Widget>[
+          Expanded(
+            child: Container(
+              color: Colors.black87, // Background for the CropImage area
+              padding: const EdgeInsets.all(8.0),
+              child: CropImage(
+                controller: _cropController,
+                // IMPORTANT: You must provide an Image widget.
+                // The CropImage widget will resolve it to a ui.Image for the controller.
+                image: Image.asset('assets/08272011229.jpg'), // Ensure this asset exists
+                // Example: Using a network image (uncomment and replace URL)
+                // image: Image.network('https://picsum.photos/seed/picsum/800/600'),
+                paddingSize: 0, // Padding around the displayed image area
+                scrimColor: Colors.black.withOpacity(0.7),
+                onCropMaskChanged: (rect) {
+                  // You can get updates when the crop mask is changed by gestures
+                  // print("Crop mask updated by gesture: $rect");
+                },
+              ),
+            ),
+          ),
+          if (_cropController.image != null) // Only show controls if image is loaded
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                children: [
+                  // Row(
+                  //   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  //   children: <Widget>[
+                  //     IconButton(
+                  //       icon: const Icon(Icons.rotate_left),
+                  //       tooltip: 'Rotate Left',
+                  //       onPressed: () {
+                  //         _cropController.rotateLeft();
+                  //       },
+                  //     ),
+                  //     IconButton(
+                  //       icon: const Icon(Icons.rotate_right),
+                  //       tooltip: 'Rotate Right',
+                  //       onPressed: () {
+                  //         _cropController.rotateRight();
+                  //       },
+                  //     ),
+                  //   ],
+                  // ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: <Widget>[
+                      const Text('Zoom:'),
+                      Expanded(
+                        child: Slider(
+                          value: _currentZoomSliderValue,
+                          min: 1.0,
+                          max: 8.0, // Max zoom factor allowed by controller
+                          divisions: 70, // (max-min) * 10 for 0.1 steps
+                          label: _currentZoomSliderValue.toStringAsFixed(1),
+                          onChanged: (double value) {
+                            setState(() {
+                              _currentZoomSliderValue = value;
+                              _cropController.imageZoomFactor = value;
+                            });
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  // Example: Aspect ratio control (more advanced to implement fully)
+                  // You could have buttons to set _cropController.aspectRatio here
+                  // For instance:
+                  // ElevatedButton(
+                  //   onPressed: () => _cropController.aspectRatio = 16/9,
+                  //   child: Text("16:9"),
+                  // ),
+                  // ElevatedButton(
+                  //   onPressed: () => _cropController.aspectRatio = 1/1,
+                  //   child: Text("Square"),
+                  // ),
+                  // ElevatedButton(
+                  //   onPressed: () => _cropController.aspectRatio = null, // Freeform
+                  //   child: Text("Free"),
+                  // ),
+                ],
+              )
+            ),
+          const SizedBox(height: 20),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _cropController.image != null ? _cropImage : null,
+        tooltip: 'Crop Image',
+        backgroundColor: _cropController.image != null ? Theme.of(context).primaryColor : Colors.grey,
+        child: const Icon(Icons.crop),
+      ),
+    );
   }
 }
